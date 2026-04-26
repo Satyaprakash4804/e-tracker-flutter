@@ -23,7 +23,6 @@ android {
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
 
-        // 🔥 VERSION IS NOW CONTROLLED FROM pubspec.yaml
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -34,11 +33,8 @@ android {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-
-            // TODO: Replace with your release keystore for production
             signingConfig = signingConfigs.getByName("debug")
         }
-
         debug {
             isMinifyEnabled = false
             isShrinkResources = false
@@ -60,4 +56,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.10.3")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // FIX: WorkManager — the only mechanism that survives OEM aggressive kill
+    // Kotlin + coroutines extension for cleaner worker code
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

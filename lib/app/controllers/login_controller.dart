@@ -12,6 +12,7 @@ import '../controllers/admin_controller.dart';
 class LoginController extends GetxController {
   RxBool loading = false.obs;
   RxBool obscurePassword = true.obs;
+  RxString errorMessage = ''.obs;
 
   final username = ''.obs;
   final password = ''.obs;
@@ -20,6 +21,10 @@ class LoginController extends GetxController {
 
   void togglePasswordVisibility() {
     obscurePassword.value = !obscurePassword.value;
+  }
+
+  void clearError() {
+    if (errorMessage.value.isNotEmpty) errorMessage.value = '';
   }
 
   // ============================
@@ -39,13 +44,11 @@ class LoginController extends GetxController {
     final String? uname  = box.read("username");
 
     if (role == null || userId == null || token == null) {
-      // Corrupt session — force re-login
       box.erase();
       Get.offAllNamed(Routes.LOGIN);
       return;
     }
 
-    // ── Restore by role ──────────────────────────────────────
     switch (role) {
       case "master_admin":
         Get.put(MasterAdminController());
@@ -61,7 +64,6 @@ class LoginController extends GetxController {
         if (!Get.isRegistered<SpecialEmployeeController>()) {
           Get.put(SpecialEmployeeController());
         }
-        // Check registration status
         final bool registered = box.read("employee_registered") ?? false;
         if (!registered) {
           box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
@@ -95,8 +97,10 @@ class LoginController extends GetxController {
   // NORMAL LOGIN
   // ============================
   Future<void> login() async {
+    clearError();
+
     if (username.value.trim().isEmpty || password.value.trim().isEmpty) {
-      Get.snackbar("Error", "Please enter username & password");
+      errorMessage.value = "Please enter username & password";
       return;
     }
 
@@ -113,100 +117,77 @@ class LoginController extends GetxController {
       );
     } catch (_) {
       loading.value = false;
-      Get.snackbar("Error", "Network error occurred");
+      errorMessage.value = "Network error. Please check your connection.";
       return;
     }
 
     loading.value = false;
 
     if (res == null || res is! Map) {
-      Get.snackbar("Error", "Invalid server response");
+      errorMessage.value = "Invalid server response. Please try again.";
       return;
     }
 
     if (res["success"] != true) {
-      Get.snackbar("Login Failed", res["message"] ?? "Invalid credentials");
+      errorMessage.value = res["message"] ?? "Invalid credentials";
       return;
     }
 
-    final role       = res["role"];
+    final role       = res["role"] as String;
     final int userId = res["user_id"];
 
     // ── Persist full session ──────────────────────────────────
-    box.write("logged_in", true);
-    box.write("role",      role);
-    box.write("username",  username.value.trim());
-    box.write("user_id",   userId);
-    box.write("token",     res["token"]);
+    box.write("logged_in",          true);
+    box.write("role",               role);
+    box.write("username",           username.value.trim());
+    box.write("user_id",            userId);
+    box.write("token",              res["token"]);
 
-    // ============================
-    // MASTER ADMIN — no registration needed
-    // ============================
-    if (role == "master_admin") {
-      Get.put(MasterAdminController());
-      Get.offAllNamed(Routes.MASTER_ADMIN_DASHBOARD);
-      return;
+    // FIX: registration_completed now comes from the API response directly —
+    // no second request needed. master_admin & admin are always true server-side.
+    final bool registered = res["registration_completed"] == true;
+    box.write("employee_registered", registered);
+
+    // ── Navigate by role ──────────────────────────────────────
+    switch (role) {
+      case "master_admin":
+        Get.put(MasterAdminController());
+        Get.offAllNamed(Routes.MASTER_ADMIN_DASHBOARD);
+        break;
+
+      case "admin":
+        Get.put(AdminController());
+        Get.offAllNamed(Routes.ADMIN_DASHBOARD);
+        break;
+
+      case "special_employee":
+        if (!Get.isRegistered<SpecialEmployeeController>()) {
+          Get.put(SpecialEmployeeController());
+        }
+        if (!registered) {
+          box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
+          Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+        } else {
+          Get.offAllNamed(Routes.SPECIAL_EMPLOYEE_DASHBOARD);
+        }
+        break;
+
+      case "employee":
+        final emp = Get.isRegistered<EmployeeController>()
+            ? Get.find<EmployeeController>()
+            : Get.put(EmployeeController());
+        emp.setUser(userId, username.value.trim());
+        if (!registered) {
+          box.write("post_registration_route", Routes.EMPLOYEE_DASHBOARD);
+          Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+        } else {
+          Get.offAllNamed(Routes.EMPLOYEE_DASHBOARD);
+        }
+        break;
+
+      default:
+        errorMessage.value = "Unknown role received. Please contact support.";
     }
-
-    // ============================
-    // ADMIN — no registration needed
-    // ============================
-    if (role == "admin") {
-      Get.put(AdminController());
-      Get.offAllNamed(Routes.ADMIN_DASHBOARD);
-      return;
-    }
-
-    // ============================
-    // SPECIAL EMPLOYEE
-    // ============================
-    if (role == "special_employee") {
-      if (!Get.isRegistered<SpecialEmployeeController>()) {
-        Get.put(SpecialEmployeeController());
-      }
-
-      final status = await ApiService.get(
-        "${ApiEndpoints.employeeRegistrationStatus}/$userId",
-      );
-      final bool registered = status != null && status["registered"] == true;
-      box.write("employee_registered", registered);
-
-      if (!registered) {
-        box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
-        Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
-        return;
-      }
-
-      Get.offAllNamed(Routes.SPECIAL_EMPLOYEE_DASHBOARD);
-      return;
-    }
-
-    // ============================
-    // EMPLOYEE
-    // ============================
-    if (role == "employee") {
-      final emp = Get.isRegistered<EmployeeController>()
-          ? Get.find<EmployeeController>()
-          : Get.put(EmployeeController());
-      emp.setUser(userId, username.value.trim());
-
-      final status = await ApiService.get(
-        "${ApiEndpoints.employeeRegistrationStatus}/$userId",
-      );
-      final bool registered = status != null && status["registered"] == true;
-      box.write("employee_registered", registered);
-
-      if (!registered) {
-        box.write("post_registration_route", Routes.EMPLOYEE_DASHBOARD);
-        Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
-        return;
-      }
-
-      Get.offAllNamed(Routes.EMPLOYEE_DASHBOARD);
-      return;
-    }
-
-    Get.snackbar("Error", "Unknown role received");
   }
 
   // ============================
@@ -214,19 +195,10 @@ class LoginController extends GetxController {
   // ============================
   static void logout() {
     GetStorage().erase();
-    // Dispose controllers safely
-    if (Get.isRegistered<MasterAdminController>()) {
-      Get.delete<MasterAdminController>();
-    }
-    if (Get.isRegistered<SpecialEmployeeController>()) {
-      Get.delete<SpecialEmployeeController>();
-    }
-    if (Get.isRegistered<EmployeeController>()) {
-      Get.delete<EmployeeController>();
-    }
-    if (Get.isRegistered<AdminController>()) {
-      Get.delete<AdminController>();
-    }
+    if (Get.isRegistered<MasterAdminController>()) Get.delete<MasterAdminController>();
+    if (Get.isRegistered<SpecialEmployeeController>()) Get.delete<SpecialEmployeeController>();
+    if (Get.isRegistered<EmployeeController>()) Get.delete<EmployeeController>();
+    if (Get.isRegistered<AdminController>()) Get.delete<AdminController>();
     Get.offAllNamed(Routes.LOGIN);
   }
 }

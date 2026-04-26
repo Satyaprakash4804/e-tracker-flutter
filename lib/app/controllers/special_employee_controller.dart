@@ -14,6 +14,7 @@ import 'package:record/record.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:flutter/services.dart';
 
 import '../data/api_service.dart';
 import '../constants/api_endpoints.dart';
@@ -24,38 +25,33 @@ class SpecialEmployeeController extends GetxController {
   final _battery = Battery();
   AudioRecorder? _recorder;
 
+  // FIX: 'const' is invalid for MethodChannel — must be static const or final
+  static const _platform = MethodChannel('etracker_channel');
+
   late int    userId;
   late String username;
 
-  // ── UI State ──
   RxBool  loading       = false.obs;
-  // Online = only true when location is actively being sent within last 30s
   RxBool  isOnline      = false.obs;
   RxBool  trackingOn    = false.obs;
   RxBool  recordingOn   = false.obs;
   RxBool  trackLocked   = false.obs;
   RxBool  recLocked     = false.obs;
 
-  // ── Location ──
   Rx<double?> lat      = Rx<double?>(null);
   Rx<double?> lng      = Rx<double?>(null);
   RxString lastUpdate  = ''.obs;
   RxInt    battery     = (-1).obs;
 
-  // ── Shift / Geofences / Notifications ──
   RxString workingSlot = ''.obs;
   RxList<Map<String, dynamic>> geofences     = <Map<String, dynamic>>[].obs;
   RxList<Map<String, dynamic>> notifications = <Map<String, dynamic>>[].obs;
 
-  // ── Profile selfie ──
   RxString selfieUrl = ''.obs;
 
-  // ── Recording internals ──
   bool      _isRecording = false;
   DateTime? _recStart;
 
-  // ── Online: only true when actively tracking + sending location ──
-  // Socket connect alone does NOT make user online
   DateTime? _lastLocationSent;
   Timer?    _onlineCheckTimer;
 
@@ -106,19 +102,47 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) { debugPrint("loadProfile error: $e"); }
   }
 
-  // ── Socket — connect does NOT set online ──────────────────────
+  // ── START NATIVE SERVICE ─────────────────────────────────────
+  // Extracted helper so both toggleTracking and loadControlStatus can call it
+  Future<void> _startNativeService() async {
+    try {
+      // FIX: Pass the raw HTTP base URL without /api suffix.
+      // LocationService.kt will append /api/location/update itself.
+      // Strip /api or /api/ from the end of baseUrl if present.
+      final httpBase = ApiEndpoints.baseUrl
+          .replaceAll(RegExp(r'/api/?$'), '');
+  
+      await _platform.invokeMethod('startService', {
+        'user_id':   userId,
+        'serverUrl': httpBase,                  // ✅ e.g. "http://10.0.0.1:5000"
+        'token':     box.read("token") ?? "",
+      });
+      debugPrint("✅ Native service started → $httpBase");
+    } catch (e) {
+      debugPrint("⚠️ Start native service error: $e");
+    }
+  }
+
+  Future<void> _stopNativeService() async {
+    try {
+      await _platform.invokeMethod('stopService');
+      debugPrint("🛑 Native location service stopped");
+    } catch (e) {
+      debugPrint("⚠️ Stop native service error: $e");
+    }
+  }
+
+  // ── Socket ───────────────────────────────────────────────────
   void _initSocket() {
     try {
       socket = IO.io(ApiEndpoints.socketBase,
           IO.OptionBuilder().setTransports(['websocket']).enableAutoConnect().build());
 
       socket!.onConnect((_) {
-        // Don't set isOnline here — only set when location is actually sent
         socket!.emit("join", {"user_id": userId});
       });
 
       socket!.onDisconnect((_) {
-        // On disconnect → offline immediately
         isOnline.value = false;
         _lastLocationSent = null;
       });
@@ -139,7 +163,6 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) { debugPrint("Socket error: $e"); }
   }
 
-  // Online only when a location was successfully sent within last 30s
   void _markLocationSent() {
     _lastLocationSent = DateTime.now();
     isOnline.value = true;
@@ -147,12 +170,8 @@ class SpecialEmployeeController extends GetxController {
 
   void _startOnlineCheck() {
     _onlineCheckTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (_lastLocationSent == null) {
-        isOnline.value = false;
-        return;
-      }
+      if (_lastLocationSent == null) { isOnline.value = false; return; }
       final elapsed = DateTime.now().difference(_lastLocationSent!).inSeconds;
-      // Online only if sent location within last 20s (2 GPS cycles)
       isOnline.value = elapsed <= 20;
     });
   }
@@ -194,8 +213,18 @@ class SpecialEmployeeController extends GetxController {
       recordingOn.value = rs["effective"]    == true || rs["effective"]    == 1;
       workingSlot.value = res["working_hours_slot"] ?? '';
 
-      if (trackingOn.value && _locationTimer == null) _startGPS();
-      else if (!trackingOn.value) _stopGPS();
+      if (trackingOn.value) {
+        // FIX: Start both Flutter GPS timer AND native service on app launch
+        // This handles the case where tracking was ON before app was killed
+        if (_locationTimer == null) _startGPS();
+        await _startNativeService();
+      } else {
+        _stopGPS();
+        // Don't stop native service here — if it's running from a previous
+        // session, loadControlStatus is called on init and the backend
+        // says tracking is off, so stop it.
+        await _stopNativeService();
+      }
 
       if (recordingOn.value && !_isRecording) await _startAudioRecording();
       else if (!recordingOn.value && _isRecording) await _stopAndUploadRecording();
@@ -218,11 +247,22 @@ class SpecialEmployeeController extends GetxController {
         ApiEndpoints.specialToggleTracking, {"user_id": userId, "enabled": ns});
     if (res != null && res["success"] == true) {
       trackingOn.value = ns;
-      if (ns) _startGPS(); else { _stopGPS(); isOnline.value = false; _lastLocationSent = null; }
+      if (ns) {
+        _startGPS();
+        // FIX: Start native service so tracking persists after app kill
+        await _startNativeService();
+      } else {
+        _stopGPS();
+        isOnline.value = false;
+        _lastLocationSent = null;
+        // FIX: Stop native service and clear SharedPrefs active flag
+        await _stopNativeService();
+      }
       if (Get.isRegistered<EmployeeController>()) {
         Get.find<EmployeeController>().tracking.value = ns;
       }
-      Get.snackbar(ns ? "Tracking ON" : "Tracking OFF",
+      Get.snackbar(
+          ns ? "Tracking ON" : "Tracking OFF",
           ns ? "Location sharing started" : "Stopped",
           snackPosition: SnackPosition.BOTTOM);
     } else if (res != null && res["locked"] == true) {
@@ -325,7 +365,7 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) { debugPrint("_uploadRecording error: $e"); }
   }
 
-  // ── GPS Loop ─────────────────────────────────────────────────
+  // ── GPS Loop (Flutter-side, for when app is in foreground) ───
   void _startGPS() {
     if (_locationTimer != null) return;
     _sendLocation();
@@ -360,11 +400,12 @@ class SpecialEmployeeController extends GetxController {
       await _readBattery();
 
       await ApiService.post(ApiEndpoints.updateLocation, {
-        "user_id": userId, "latitude": pos.latitude,
-        "longitude": pos.longitude, "battery": battery.value,
+        "user_id":   userId,
+        "latitude":  pos.latitude,
+        "longitude": pos.longitude,
+        "battery":   battery.value,
       });
 
-      // Only mark online AFTER successful location send
       _markLocationSent();
     } catch (e) {
       debugPrint("_sendLocation error: $e");
@@ -416,9 +457,7 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) { debugPrint("loadGeofences error: $e"); }
   }
 
-  // ================================================================
-  // GEO-TAGGED PHOTO — fixed: proper dialog management
-  // ================================================================
+  // ── Geo-tagged Photo ─────────────────────────────────────────
   Future<void> captureAndUploadPhoto() async {
     if (!await _ensureGpsPermission()) return;
 
@@ -427,7 +466,6 @@ class SpecialEmployeeController extends GetxController {
         source: ImageSource.camera, imageQuality: 90);
     if (file == null) return;
 
-    // Show loading dialog
     bool dialogOpen = false;
     Get.dialog(
       const Center(
@@ -501,9 +539,7 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) {
       closeDialog();
       Get.snackbar("❌ Upload Failed",
-          e.toString().length > 80
-              ? "${e.toString().substring(0, 80)}…"
-              : e.toString(),
+          e.toString().length > 80 ? "${e.toString().substring(0, 80)}…" : e.toString(),
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.red[100],
           colorText: Colors.red[900]);
@@ -536,28 +572,19 @@ class SpecialEmployeeController extends GetxController {
         title: const Text("Enable GPS"),
         content: const Text("Please enable location services."),
         actions: [
-          TextButton(
-              onPressed: () => Get.back(),
-              child: const Text("Cancel")),
+          TextButton(onPressed: () => Get.back(), child: const Text("Cancel")),
           ElevatedButton(
-              onPressed: () async {
-                Get.back();
-                await Geolocator.openLocationSettings();
-              },
+              onPressed: () async { Get.back(); await Geolocator.openLocationSettings(); },
               child: const Text("Open GPS")),
         ],
       ));
       return false;
     }
     var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
-    return perm != LocationPermission.denied &&
-        perm != LocationPermission.deniedForever;
+    if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+    return perm != LocationPermission.denied && perm != LocationPermission.deniedForever;
   }
 
-  // ── Helpers ──────────────────────────────────────────────────
   double _haversine(double lat1, double lng1, double lat2, double lng2) {
     const R = 6371000.0;
     final dLat = (lat2 - lat1) * math.pi / 180;
@@ -591,6 +618,8 @@ class SpecialEmployeeController extends GetxController {
     _batteryTimer?.cancel();
     _onlineCheckTimer?.cancel();
     if (_isRecording) _stopAndUploadRecording();
+    // FIX: Stop native service on logout so it doesn't track after sign-out
+    _stopNativeService();
     try { socket?.disconnect(); socket?.dispose(); } catch (_) {}
     box.erase();
     Get.offAllNamed('/login');
@@ -605,5 +634,8 @@ class SpecialEmployeeController extends GetxController {
     try { _recorder?.dispose(); } catch (_) {}
     try { socket?.disconnect(); socket?.dispose(); } catch (_) {}
     super.onClose();
+    // Note: do NOT stop the native service in onClose —
+    // onClose is called when the widget tree disposes (e.g. navigation),
+    // not only when the app is killed. The native service should keep running.
   }
 }

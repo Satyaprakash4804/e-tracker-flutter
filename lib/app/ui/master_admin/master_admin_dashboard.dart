@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../../controllers/master_admin_controller.dart';
 import '../../controllers/admin_controller.dart';
@@ -77,6 +78,14 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
     if (p == null || p.isEmpty) return null;
     if (p.startsWith('http')) return p;
     return "${ApiEndpoints.baseUrl.replaceAll(RegExp(r'/api$'), '')}$p";
+  }
+
+  bool _toBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int) return v != 0;
+    if (v is String) return v == '1' || v.toLowerCase() == 'true';
+    return false;
   }
 
   List<Map<String, dynamic>> get _filtered {
@@ -648,7 +657,7 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
     final isEmp   = role == "employee" || isSP;
     final bat     = u["battery"] as int? ?? -1;
     final lowBat  = bat != -1 && bat < 25;
-    final reg     = u["registration_completed"] == 1;
+    final reg     = _toBool(u["registration_completed"]);
     final img     = _imgUrl(u["selfie_path"]);
     final hasShift= (u["working_hours_slot"] as String? ?? "").isNotEmpty;
 
@@ -758,7 +767,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                 horizontal: isSmall ? 12 : 16,
                 vertical: isSmall ? 10 : 14),
             child: isMedium || !isSmall
-                // 2-column grid on medium/large
                 ? Column(children: [
                     Row(children: [
                       Expanded(child: _infoRow(
@@ -785,7 +793,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                           _slot(u["working_hours_slot"]), isSmall)),
                     ]),
                   ])
-                // single column on small
                 : Column(children: [
                     _infoRow(Icons.location_on_outlined, "Location",
                         u["lat"] != null
@@ -1268,7 +1275,7 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
       );
 
   // ================================================================
-  // CONFIRM DELETE  — FIXED: () => Get.back()
+  // CONFIRM DELETE
   // ================================================================
   void _confirmDelete(Map u) {
     Get.dialog(
@@ -1282,14 +1289,13 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
             style: TextStyle(color: Colors.blueGrey[700])),
         actions: [
           TextButton(
-            // ✅ FIXED
             onPressed: () => Get.back(),
             child: Text("Cancel",
                 style: TextStyle(color: Colors.blueGrey[600])),
           ),
           ElevatedButton(
             onPressed: () {
-              Get.back(); // ✅ FIXED
+              Get.back();
               c.deleteUser(u["id"]);
             },
             style: ElevatedButton.styleFrom(
@@ -1305,7 +1311,7 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
   }
 
   // ================================================================
-  // CREATE USER SHEET  — FIXED context + Get.back()
+  // CREATE USER SHEET
   // ================================================================
   InputDecoration _iDeco(String label, IconData icon) => InputDecoration(
         labelText: label,
@@ -1338,7 +1344,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
       context: ctx,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      // ✅ FIXED: renamed inner context to sheetCtx to avoid shadowing 'c'
       builder: (_) => StatefulBuilder(
         builder: (sheetCtx, ss) => Padding(
           padding: EdgeInsets.only(
@@ -1356,7 +1361,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Handle bar
                     Center(
                       child: Container(
                           width: 40,
@@ -1366,8 +1370,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                               borderRadius: BorderRadius.circular(2))),
                     ),
                     const SizedBox(height: 16),
-
-                    // Title
                     Row(children: [
                       Container(
                         padding: const EdgeInsets.all(10),
@@ -1466,7 +1468,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                     Row(children: [
                       Expanded(
                         child: OutlinedButton(
-                          // ✅ FIXED
                           onPressed: () => Get.back(),
                           style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.blueGrey[700],
@@ -1607,7 +1608,7 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
   }
 
   // ================================================================
-  // WORKING HOURS SHEET  — FIXED: Navigator.of(ctx).pop()
+  // WORKING HOURS SHEET
   // ================================================================
   void _showHoursSheet(BuildContext ctx, Map u) {
     final existing = u["working_hours_slot"] as String? ?? "";
@@ -1686,7 +1687,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                         snackPosition: SnackPosition.BOTTOM);
                     return;
                   }
-                  // ✅ FIXED: use Navigator to avoid context issues
                   Navigator.of(sheetCtx2).pop();
                   c.setWorkingHours(userId: u["id"], slot: sel);
                 },
@@ -1707,240 +1707,19 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
   }
 
   // ================================================================
-  // FORCE CONTROLS SHEET  — FIXED: pre-fetch + () => Get.back()
+  // FORCE CONTROLS SHEET
   // ================================================================
   void _showForceSheet(BuildContext ctx, Map u) {
-    bool trackOn     = false;
-    bool recOn       = false;
-    bool loadingInit = true;
-
     showModalBottomSheet(
       context: ctx,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(
-        builder: (sheetCtx, ss) {
-          // ✅ FIXED: only fetch once when loadingInit is true
-          if (loadingInit) {
-            loadingInit = false; // prevent re-fetch on rebuild
-            Future.microtask(() async {
-              final data = await c.getControlStatus(u["id"]);
-              if (data != null && data["success"] == true) {
-                ss(() {
-                  trackOn =
-                      data["tracking"]?["effective"] == true;
-                  recOn =
-                      data["recording"]?["effective"] == true;
-                });
-              }
-            });
-          }
-
-          final slot = u["working_hours_slot"] as String? ?? "";
-          return Container(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-            decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(24))),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Center(
-                child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.blueGrey[200],
-                        borderRadius: BorderRadius.circular(2))),
-              ),
-              const SizedBox(height: 16),
-
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: Colors.purple.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.shield, color: Colors.purple),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("Force Controls",
-                            style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blueGrey[900])),
-                        Text(u["username"] ?? "",
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.blueGrey[600])),
-                      ]),
-                ),
-              ]),
-
-              if (slot.isNotEmpty)
-                Container(
-                  margin: const EdgeInsets.only(top: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.orange[200]!),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.schedule,
-                        color: Colors.orange[700], size: 14),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                          "Only works during: ${_slot(slot)}",
-                          style: TextStyle(
-                              color: Colors.orange[800], fontSize: 11)),
-                    ),
-                  ]),
-                ),
-
-              const SizedBox(height: 14),
-
-              // Loading or controls
-              loadingInit
-                  ? const Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator())
-                  : Column(children: [
-                      _forceRow(
-                        Icons.location_on,
-                        Colors.blue[700]!,
-                        "GPS Tracking",
-                        trackOn,
-                        () async {
-                          final ok = await c.forceTracking(
-                              userId: u["id"], enabled: true);
-                          if (ok) ss(() => trackOn = true);
-                        },
-                        () async {
-                          final ok = await c.forceTracking(
-                              userId: u["id"], enabled: false);
-                          if (ok) ss(() => trackOn = false);
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      _forceRow(
-                        Icons.mic,
-                        Colors.purple,
-                        "Voice Recording",
-                        recOn,
-                        () async {
-                          final ok = await c.forceRecording(
-                              userId: u["id"], enabled: true);
-                          if (ok) ss(() => recOn = true);
-                        },
-                        () async {
-                          final ok = await c.forceRecording(
-                              userId: u["id"], enabled: false);
-                          if (ok) ss(() => recOn = false);
-                        },
-                      ),
-                    ]),
-
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  // ✅ FIXED
-                  onPressed: () => Get.back(),
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.blueGrey[700],
-                      side: BorderSide(color: Colors.blueGrey[300]!),
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12))),
-                  child: const Text("Close"),
-                ),
-              ),
-            ]),
-          );
-        },
-      ),
+      builder: (_) => _ForceControlSheet(user: u, controller: c),
     );
   }
 
-  Widget _forceRow(
-    IconData icon,
-    Color color,
-    String title,
-    bool isOn,
-    Future<void> Function() onOn,
-    Future<void> Function() onOff,
-  ) =>
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-            color: Colors.blueGrey[50],
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.blueGrey[200]!)),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          color: Colors.blueGrey[900],
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700)),
-                  Text(
-                      isOn ? "Currently FORCED ON" : "Currently OFF",
-                      style: TextStyle(
-                          color: isOn
-                              ? Colors.red[700]
-                              : Colors.blueGrey[500],
-                          fontSize: 11)),
-                ]),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 84,
-            child: ElevatedButton(
-              onPressed: isOn ? onOff : onOn,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isOn
-                    ? Colors.red.withOpacity(0.12)
-                    : color.withOpacity(0.12),
-                foregroundColor:
-                    isOn ? Colors.red[700] : color,
-                elevation: 0,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 8),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    side: BorderSide(
-                        color: isOn
-                            ? Colors.red.withOpacity(0.4)
-                            : color.withOpacity(0.4))),
-              ),
-              child: Text(
-                  isOn ? "OFF" : "Force ON",
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w800)),
-            ),
-          ),
-        ]),
-      );
-
   // ================================================================
-  // RECORDINGS SHEET  — FIXED: () => Get.back()
+  // RECORDINGS SHEET
   // ================================================================
   void _showRecordingsSheet(BuildContext ctx, Map u) {
     showModalBottomSheet(
@@ -1979,7 +1758,6 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                           fontWeight: FontWeight.w800),
                       overflow: TextOverflow.ellipsis),
                 ),
-                // ✅ FIXED
                 IconButton(
                   icon: Icon(Icons.close,
                       color: Colors.blueGrey[500]),
@@ -2038,9 +1816,13 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
     final durStr = "$mins:${secs.toString().padLeft(2, '0')}";
     final started = r["started_at"] as String? ?? "";
     final fname   = r["filename"] as String? ?? "Recording ${r['id']}";
-    final base    = ApiEndpoints.baseUrl.replaceAll(RegExp(r'/api$'), '');
-    final url     = "$base${r['download_url']}";
-    final token   = GetStorage().read("token") ?? "";
+
+    final base         = ApiEndpoints.baseUrl.replaceAll(RegExp(r'/api/?$'), '');
+    final downloadPath = r['download_url'] as String? ?? '';
+    final url          = downloadPath.startsWith('http')
+        ? downloadPath
+        : '$base$downloadPath';
+    final token = GetStorage().read("token") ?? "";
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2086,18 +1868,296 @@ class _MasterAdminDashboardState extends State<MasterAdminDashboard>
                           color: Colors.blue[700], fontSize: 11)),
               ]),
         ),
+        // ── FIX: clean single onPressed, no nested closure ──
         IconButton(
           icon: Icon(Icons.play_circle,
               color: Colors.orange[700], size: 30),
           onPressed: () async {
-            final uri =
-                Uri.parse("$url?token=$token");
-            if (await canLaunchUrl(uri)) await launchUrl(uri);
+            final player = AudioPlayer();
+            final uri = Uri.parse(url).replace(
+              queryParameters: {'token': token},
+            );
+            try {
+              await player.setUrl(uri.toString());
+              await player.play();
+            } catch (e) {
+              Get.snackbar(
+                "Playback Error",
+                "Could not play audio: $e",
+                snackPosition: SnackPosition.BOTTOM,
+              );
+            }
           },
         ),
       ]),
     );
   }
+}
+
+// ================================================================
+// FORCE CONTROL SHEET — dedicated StatefulWidget
+// ================================================================
+class _ForceControlSheet extends StatefulWidget {
+  final Map user;
+  final MasterAdminController controller;
+
+  const _ForceControlSheet({
+    required this.user,
+    required this.controller,
+  });
+
+  @override
+  State<_ForceControlSheet> createState() => _ForceControlSheetState();
+}
+
+class _ForceControlSheetState extends State<_ForceControlSheet> {
+  bool _loading = true;
+  bool _trackOn = false;
+  bool _recOn   = false;
+  String? _errorMsg;
+
+  bool _toBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int) return v != 0;
+    if (v is String) return v == '1' || v.toLowerCase() == 'true';
+    return false;
+  }
+
+  String _slot(String? s) => const {
+    '9-5': '09:00–17:00 Day',
+    '5-1': '17:00–01:00 Eve',
+    '1-9': '01:00–09:00 Night',
+  }[s] ?? 'Not Set';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchStatus();
+  }
+
+  Future<void> _fetchStatus() async {
+    if (!mounted) return;
+    setState(() { _loading = true; _errorMsg = null; });
+    try {
+      final data = await widget.controller.getControlStatus(widget.user["id"]);
+      if (!mounted) return;
+      if (data != null && _toBool(data["success"])) {
+        setState(() {
+          _trackOn = _toBool(data["tracking"]?["effective"]);
+          _recOn   = _toBool(data["recording"]?["effective"]);
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _errorMsg = data?["message"] ?? "Failed to load control status";
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMsg = "Network error: $e";
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final u    = widget.user;
+    final slot = u["working_hours_slot"] as String? ?? "";
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Center(child: Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+                color: Colors.blueGrey[200],
+                borderRadius: BorderRadius.circular(2)))),
+        const SizedBox(height: 16),
+
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: Colors.purple.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.shield, color: Colors.purple),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Force Controls",
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey[900])),
+                Text(u["username"] ?? "",
+                    style: TextStyle(fontSize: 13, color: Colors.blueGrey[600])),
+              ])),
+        ]),
+
+        if (slot.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange[200]!),
+            ),
+            child: Row(children: [
+              Icon(Icons.schedule, color: Colors.orange[700], size: 14),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                  "Only works during: ${_slot(slot)}",
+                  style: TextStyle(color: Colors.orange[800], fontSize: 11))),
+            ]),
+          ),
+
+        const SizedBox(height: 14),
+
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: CircularProgressIndicator(),
+          )
+        else if (_errorMsg != null)
+          Column(children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.red[200]!)),
+              child: Row(children: [
+                Icon(Icons.error_outline, color: Colors.red[700], size: 16),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_errorMsg!,
+                    style: TextStyle(color: Colors.red[800], fontSize: 12))),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: _fetchStatus,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text("Retry"),
+            ),
+          ])
+        else
+          Column(children: [
+            _forceRow(
+              icon: Icons.location_on,
+              color: Colors.blue[700]!,
+              title: "GPS Tracking",
+              isOn: _trackOn,
+              onToggle: (enable) async {
+                final ok = await widget.controller.forceTracking(
+                    userId: u["id"], enabled: enable);
+                if (ok && mounted) setState(() => _trackOn = enable);
+              },
+            ),
+            const SizedBox(height: 10),
+            _forceRow(
+              icon: Icons.mic,
+              color: Colors.purple,
+              title: "Voice Recording",
+              isOn: _recOn,
+              onToggle: (enable) async {
+                final ok = await widget.controller.forceRecording(
+                    userId: u["id"], enabled: enable);
+                if (ok && mounted) setState(() => _recOn = enable);
+              },
+            ),
+          ]),
+
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => Get.back(),
+            style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.blueGrey[700],
+                side: BorderSide(color: Colors.blueGrey[300]!),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12))),
+            child: const Text("Close"),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _forceRow({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required bool isOn,
+    required Future<void> Function(bool enable) onToggle,
+  }) =>
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: Colors.blueGrey[50],
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.blueGrey[200]!)),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        color: Colors.blueGrey[900],
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700)),
+                Text(
+                    isOn ? "Currently FORCED ON" : "Currently OFF",
+                    style: TextStyle(
+                        color: isOn ? Colors.red[700] : Colors.blueGrey[500],
+                        fontSize: 11)),
+              ])),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 84,
+            child: ElevatedButton(
+              onPressed: () => onToggle(!isOn),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isOn
+                    ? Colors.red.withOpacity(0.12)
+                    : color.withOpacity(0.12),
+                foregroundColor: isOn ? Colors.red[700] : color,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(
+                        color: isOn
+                            ? Colors.red.withOpacity(0.4)
+                            : color.withOpacity(0.4))),
+              ),
+              child: Text(
+                  isOn ? "OFF" : "Force ON",
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w800)),
+            ),
+          ),
+        ]),
+      );
 }
 
 // ================================================================
@@ -2166,21 +2226,23 @@ class _RecPreviewState extends State<_RecPreview> {
         final dur   = r["duration_seconds"] as int? ?? 0;
         final mins  = dur ~/ 60;
         final secs  = dur % 60;
-        final base  = widget.baseUrl.replaceAll(RegExp(r'/api$'), '');
-        final url   = "$base${r['download_url']}";
+
+        final base         = widget.baseUrl.replaceAll(RegExp(r'/api/?$'), '');
+        final downloadPath = r['download_url'] as String? ?? '';
+        final url          = downloadPath.startsWith('http')
+            ? downloadPath
+            : '$base$downloadPath';
         final token = GetStorage().read("token") ?? "";
 
         return Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
               color: Colors.blueGrey[50],
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.blueGrey[200]!)),
           child: Row(children: [
-            Icon(Icons.audio_file,
-                color: Colors.orange[700], size: 18),
+            Icon(Icons.audio_file, color: Colors.orange[700], size: 18),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -2198,14 +2260,27 @@ class _RecPreviewState extends State<_RecPreview> {
                               fontWeight: FontWeight.w700)),
                   ]),
             ),
+            // ── FIX: clean single onPressed, no nested closure ──
             IconButton(
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
               icon: Icon(Icons.play_circle,
                   color: Colors.orange[700], size: 26),
               onPressed: () async {
-                final uri = Uri.parse("$url?token=$token");
-                if (await canLaunchUrl(uri)) await launchUrl(uri);
+                final player = AudioPlayer();
+                final uri = Uri.parse(url).replace(
+                  queryParameters: {'token': token},
+                );
+                try {
+                  await player.setUrl(uri.toString());
+                  await player.play();
+                } catch (e) {
+                  Get.snackbar(
+                    "Playback Error",
+                    "Could not play audio: $e",
+                    snackPosition: SnackPosition.BOTTOM,
+                  );
+                }
               },
             ),
           ]),

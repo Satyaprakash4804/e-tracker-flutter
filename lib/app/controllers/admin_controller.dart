@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 import '../data/api_service.dart';
-import '../../constants/api_endpoints.dart';
+import '../constants/api_endpoints.dart';
 
 class AdminController extends GetxController {
   // ============================

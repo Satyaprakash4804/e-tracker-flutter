@@ -15,7 +15,7 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../data/api_service.dart';
-import '../../constants/api_endpoints.dart';
+import '../constants/api_endpoints.dart';
 
 class BackgroundService {
   static const _platform = MethodChannel("etracker_channel");

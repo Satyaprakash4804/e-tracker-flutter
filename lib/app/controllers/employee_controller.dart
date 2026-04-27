@@ -14,7 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
-import '../../constants/api_endpoints.dart';
+import '../constants/api_endpoints.dart';
 import '../services/background_service.dart';
 import '../data/api_service.dart';
 

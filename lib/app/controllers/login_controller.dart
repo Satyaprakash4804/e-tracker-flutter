@@ -27,9 +27,63 @@ class LoginController extends GetxController {
     if (errorMessage.value.isNotEmpty) errorMessage.value = '';
   }
 
+  // ── Helper: resolve registration status ──────────────────────
+  // FIX: The root cause of the endless registration loop.
+  //
+  // Problem: login response may not include "registration_completed"
+  // (older backend or field missing). When it's null, the old code
+  // wrote employee_registered=false, overwriting the true that was
+  // correctly saved after the employee completed registration.
+  //
+  // Solution:
+  //  1. admin/master_admin are always registered — skip the check.
+  //  2. If the API response contains registration_completed, trust it.
+  //  3. If the field is missing from the response, call the dedicated
+  //     registration-status endpoint to get the real value.
+  //  4. NEVER write false if the storage already says true — once
+  //     registered, never regress.
+  Future<bool> _resolveRegistration({
+    required String role,
+    required int userId,
+    required dynamic loginResponse,
+  }) async {
+    // admins are always registered — no registration page needed
+    if (role == 'master_admin' || role == 'admin') {
+      box.write("employee_registered", true);
+      return true;
+    }
+
+    // Check if already registered in local storage (set after registration page submit)
+    final bool alreadyInStorage = box.read("employee_registered") == true;
+    if (alreadyInStorage) {
+      // Already registered locally — trust it, don't regress
+      return true;
+    }
+
+    // Try to read from login response first
+    final dynamic fromResponse = loginResponse["registration_completed"];
+    if (fromResponse != null) {
+      final bool registered = fromResponse == true;
+      box.write("employee_registered", registered);
+      return registered;
+    }
+
+    // Field missing from response — call dedicated endpoint
+    // This handles older backends that don't return registration_completed
+    try {
+      final res = await ApiService.get(
+          "${ApiEndpoints.employeeRegistrationStatus}/$userId");
+      final bool registered = res != null && res["registered"] == true;
+      box.write("employee_registered", registered);
+      return registered;
+    } catch (_) {
+      // Network error — assume not registered to be safe
+      return false;
+    }
+  }
+
   // ============================
-  // CALLED FROM main.dart / SplashScreen
-  // Restores session on app cold start
+  // AUTO LOGIN (called from main.dart on app start)
   // ============================
   Future<void> tryAutoLogin() async {
     final bool loggedIn = box.read("logged_in") ?? false;
@@ -64,7 +118,9 @@ class LoginController extends GetxController {
         if (!Get.isRegistered<SpecialEmployeeController>()) {
           Get.put(SpecialEmployeeController());
         }
-        final bool registered = box.read("employee_registered") ?? false;
+        // FIX: Read from storage — never call API during auto-login
+        // because user is already logged in and the value was set correctly.
+        final bool registered = box.read("employee_registered") == true;
         if (!registered) {
           box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
           Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
@@ -78,7 +134,7 @@ class LoginController extends GetxController {
             ? Get.find<EmployeeController>()
             : Get.put(EmployeeController());
         emp.setUser(userId, uname ?? "");
-        final bool registered = box.read("employee_registered") ?? false;
+        final bool registered = box.read("employee_registered") == true;
         if (!registered) {
           box.write("post_registration_route", Routes.EMPLOYEE_DASHBOARD);
           Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
@@ -129,26 +185,28 @@ class LoginController extends GetxController {
     }
 
     if (res["success"] != true) {
-      errorMessage.value = res["message"] ?? "Invalid credentials";
+      errorMessage.value = res["message"] ?? "Invalid username or password";
       return;
     }
 
     final role       = res["role"] as String;
     final int userId = res["user_id"];
 
-    // ── Persist full session ──────────────────────────────────
-    box.write("logged_in",          true);
-    box.write("role",               role);
-    box.write("username",           username.value.trim());
-    box.write("user_id",            userId);
-    box.write("token",              res["token"]);
+    // Persist session
+    box.write("logged_in", true);
+    box.write("role",      role);
+    box.write("username",  username.value.trim());
+    box.write("user_id",   userId);
+    box.write("token",     res["token"]);
 
-    // FIX: registration_completed now comes from the API response directly —
-    // no second request needed. master_admin & admin are always true server-side.
-    final bool registered = res["registration_completed"] == true;
-    box.write("employee_registered", registered);
+    // FIX: Use _resolveRegistration so we never wrongly write false
+    final bool registered = await _resolveRegistration(
+      role: role,
+      userId: userId,
+      loginResponse: res,
+    );
 
-    // ── Navigate by role ──────────────────────────────────────
+    // Navigate by role
     switch (role) {
       case "master_admin":
         Get.put(MasterAdminController());
@@ -191,7 +249,7 @@ class LoginController extends GetxController {
   }
 
   // ============================
-  // LOGOUT (call this from any screen)
+  // LOGOUT
   // ============================
   static void logout() {
     GetStorage().erase();

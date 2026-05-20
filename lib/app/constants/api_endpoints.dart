@@ -1,7 +1,12 @@
 class ApiEndpoints {
     
+<<<<<<< HEAD
 //   static const String baseUrl = "http://10.163.185.54:5000/api";
 //   static const String socketBase = "http://10.163.185.54:5000";
+=======
+//   static const String baseUrl = "http://192.168.1.13:5000/api";
+//   static const String socketBase = "http://192.168.1.13:5000";
+>>>>>>> e11effb (improve master, admin, special, tracker page)
 
   static const String baseUrl = "https://tracker.venus360.in/api";
   static const String socketBase = "https://tracker.venus360.in";
@@ -19,6 +24,8 @@ class ApiEndpoints {
   static const String updateLocation = "$baseUrl/location/update";
   static const String latestLocation = "$baseUrl/location/latest";
   static const String trackRecords = "$baseUrl/location/track";
+
+  static const String updateBattery = "$baseUrl/battery/update";
 
   static const String employeeRegistrationStatus =
       "$baseUrl/employee/registration-status";
@@ -52,24 +59,24 @@ class ApiEndpoints {
   static const String employeeProfile = "$baseUrl/employee/profile";
   static const String employeeUploads = "$baseUrl/employee/uploads";
 
-  // ── Master Admin ──  ✅ FIXED: added $baseUrl prefix
+  // ── Master Admin ──
   static const String masterUsers =
       "$baseUrl/master/users";
   static const String masterCreateUser =
       "$baseUrl/master/create_user";
   static const String masterDeleteUser =
-      "$baseUrl/master/user";           // DELETE /api/master/user/:id
+      "$baseUrl/master/user";
   static const String masterWorkingHours =
-      "$baseUrl/master/working_hours";  // POST
+      "$baseUrl/master/working_hours";
   static const String masterControlStatus =
-      "$baseUrl/master/control_status"; // GET  /api/master/control_status/:id
+      "$baseUrl/master/control_status";
   static const String masterForceTracking =
-      "$baseUrl/master/force_tracking"; // POST
+      "$baseUrl/master/force_tracking";
   static const String masterForceRecording =
-      "$baseUrl/master/force_recording";// POST
+      "$baseUrl/master/force_recording";
 
   // ── Special Employee ──
-static const String specialControlStatus   = "$baseUrl/special/control_status";
-static const String specialToggleTracking  = "$baseUrl/special/toggle_tracking";
-static const String specialToggleRecording = "$baseUrl/special/toggle_recording";
+  static const String specialControlStatus   = "$baseUrl/special/control_status";
+  static const String specialToggleTracking  = "$baseUrl/special/toggle_tracking";
+  static const String specialToggleRecording = "$baseUrl/special/toggle_recording";
 }

@@ -176,36 +176,79 @@ class _EmployeeRegistrationPageState extends State<EmployeeRegistrationPage> {
       final responseBody = await response.stream.bytesToString();
 
       if (response.statusCode == 200) {
+        // Write registered flag BEFORE navigating so middleware sees it immediately
         box.write("employee_registered", true);
         final dest = box.read("post_registration_route") ?? Routes.EMPLOYEE_DASHBOARD;
-        box.remove("post_registration_route"); // clean up
-        Get.offAllNamed(dest);        
+        box.remove("post_registration_route");
+
+        // FIX: Navigate FIRST, then show snackbar on the new screen.
+        // Calling Get.snackbar() AFTER Get.offAllNamed() was causing
+        // "No Overlay widget found" because the registration page was
+        // already disposed when the snackbar tried to attach.
+        Get.offAllNamed(dest);
+        // Small delay ensures the new route's overlay is ready
+        await Future.delayed(const Duration(milliseconds: 300));
         Get.snackbar(
-          "Success",
-          "Registration completed successfully!",
+          "✅ Registration Successful",
+          "Welcome! Your profile has been submitted.",
           backgroundColor: Colors.green.shade100,
           colorText: Colors.green.shade900,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 3),
         );
+
       } else {
-        Get.snackbar(
-          "Registration Failed",
-          "Unable to complete registration. Please try again.",
-          backgroundColor: Colors.red.shade100,
-          colorText: Colors.red.shade900,
-        );
-        print(responseBody);
+        // FIX: Handle the "Duplicate entry" error specifically.
+        // This means the employee is already registered in the DB but
+        // employee_registered was false in local storage (e.g. after
+        // reinstall or data clear). Treat it as already registered.
+        bool isDuplicateEntry = responseBody.contains("Duplicate entry") ||
+            responseBody.contains("duplicate");
+
+        if (isDuplicateEntry) {
+          // Already registered on server — just fix local storage and proceed
+          box.write("employee_registered", true);
+          final dest = box.read("post_registration_route") ?? Routes.EMPLOYEE_DASHBOARD;
+          box.remove("post_registration_route");
+          Get.offAllNamed(dest);
+          await Future.delayed(const Duration(milliseconds: 300));
+          Get.snackbar(
+            "✅ Already Registered",
+            "Your profile is already on file. Taking you to the dashboard.",
+            backgroundColor: Colors.blue.shade100,
+            colorText: Colors.blue.shade900,
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 4),
+          );
+        } else {
+          // FIX: Guard setState — widget might be disposed if user navigated away
+          if (mounted) setState(() => isLoading = false);
+          Get.snackbar(
+            "Registration Failed",
+            "Unable to complete registration. Please try again.",
+            backgroundColor: Colors.red.shade100,
+            colorText: Colors.red.shade900,
+            snackPosition: SnackPosition.BOTTOM,
+          );
+        }
+        print("⚠️ Registration response: $responseBody");
+        return; // skip the finally setState below
       }
     } catch (e) {
       print("❌ ERROR: $e");
+      if (mounted) setState(() => isLoading = false);
       Get.snackbar(
         "Network Error",
         "Please check your internet connection",
         backgroundColor: Colors.red.shade100,
         colorText: Colors.red.shade900,
+        snackPosition: SnackPosition.BOTTOM,
       );
-    } finally {
-      setState(() => isLoading = false);
+      return; // skip the finally setState below
     }
+    // Only reached on success path — widget is already gone after navigation
+    // so we must NOT call setState here.
+    isLoading = false;
   }
 
   @override

@@ -2,39 +2,59 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.etracker_app">
 
-    <!-- LOCATION — foreground + background both required -->
+    <!-- ══ LOCATION ══════════════════════════════════════════════ -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- FIX: Background location must be declared AND requested at runtime separately -->
+    <!--
+        ACCESS_BACKGROUND_LOCATION must be declared here AND requested
+        separately at runtime (after fine location is already granted).
+        Without it, the FusedLocationClient stops delivering updates
+        when the app goes to the background.
+    -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!--
+        FOREGROUND_SERVICE_LOCATION is required on Android 14+ (API 34+)
+        for foreground services that access location.
+    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-    <!-- CAMERA / MEDIA -->
+    <!-- ══ CAMERA / MEDIA ════════════════════════════════════════ -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
-    <!-- NETWORK -->
+    <!-- ══ NETWORK ═══════════════════════════════════════════════ -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- AUDIO -->
+    <!-- ══ AUDIO ═════════════════════════════════════════════════ -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- BOOT — restart service after device reboot -->
+    <!-- ══ BOOT ══════════════════════════════════════════════════ -->
+    <!-- Required for BootReceiver to restart tracking after device reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- FIX: Battery optimization exemption request -->
-    <!-- This lets us show the "ignore battery optimizations" prompt via Intent -->
+    <!-- ══ BATTERY ═══════════════════════════════════════════════ -->
+    <!--
+        REQUEST_IGNORE_BATTERY_OPTIMIZATIONS lets the app show the
+        "Allow unrestricted battery use" prompt via Intent.
+        Use this in your Flutter UI to guide the user to exempt the app.
+        Without this, OEM battery savers kill the service regardless of
+        START_STICKY or WorkManager.
+    -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- WAKE LOCK — keeps CPU running for location updates in deep sleep -->
+    <!-- WAKE_LOCK keeps CPU running during location updates in deep sleep -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- WorkManager needs this for the rescue worker -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+        NOTE: SCHEDULE_EXACT_ALARM is intentionally NOT included.
+        It requires a user-granted special permission on Android 12+
+        and crashes the service if not granted. We use WorkManager +
+        START_STICKY instead — no special permissions needed.
+    -->
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -46,7 +66,11 @@
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
 
-        <!-- Boot receiver — restarts tracking after device reboot -->
+        <!--
+            ══ BOOT RECEIVER ══════════════════════════════════════
+            Restarts LocationService after device reboot.
+            Handles standard boot + Motorola/HTC quick-boot variants.
+        -->
         <receiver
             android:name="com.example.etracker_app.BootReceiver"
             android:enabled="true"
@@ -54,12 +78,20 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <!-- HTC devices -->
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 
-        <!-- Background location foreground service -->
+        <!--
+            ══ LOCATION SERVICE ═══════════════════════════════════
+            foregroundServiceType="location" — required on Android 10+
+            for services that access location in the background.
+
+            stopWithTask="false" — CRITICAL:
+            Without this, Android stops the service when the user swipes
+            the app from Recents. With this flag, onTaskRemoved() fires
+            but the service keeps running (or START_STICKY restarts it).
+        -->
         <service
             android:name="com.example.etracker_app.LocationService"
             android:enabled="true"
@@ -68,13 +100,8 @@
             android:stopWithTask="false" />
 
         <!--
-            stopWithTask="false" is CRITICAL:
-            Without it, Android stops the service when the app task is removed
-            (user swipes it from recents), defeating the entire purpose.
-            With stopWithTask="false", onTaskRemoved() is called but the service
-            keeps running (or START_STICKY restarts it).
+            ══ MAIN ACTIVITY ══════════════════════════════════════
         -->
-
         <activity
             android:name=".MainActivity"
             android:exported="true"

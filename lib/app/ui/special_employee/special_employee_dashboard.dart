@@ -9,6 +9,11 @@ import '../../routes/app_routes.dart';
 // Persistent bottom nav — IndexedStack keeps pages alive.
 // Every sub-page opens as full-screen route pushed on top of this,
 // so back button always works and bottom nav stays visible.
+//
+// 24-7 shift behaviour:
+//   • Tracking hero shows "24/7 Always On" badge instead of lock badge
+//   • Toggle button is permanently disabled (greyed out with info label)
+//   • On init the controller auto-starts GPS + native service
 // ================================================================
 class SpecialEmployeeDashboard extends StatefulWidget {
   const SpecialEmployeeDashboard({super.key});
@@ -30,11 +35,10 @@ class _State extends State<SpecialEmployeeDashboard> {
   static const _blue   = Color(0xFF1D4ED8);
   static const _purple = Color(0xFF7C3AED);
   static const _amber  = Color(0xFFF59E0B);
+  static const _teal   = Color(0xFF0F766E);   // NEW: 24-7 accent colour
 
-  // current bottom nav selection
   final RxInt _navIdx = 0.obs;
 
-  // All pages pushed via Get.toNamed so back button works
   void _onNav(int i) {
     if (i == _navIdx.value) return;
     switch (i) {
@@ -100,9 +104,7 @@ class _State extends State<SpecialEmployeeDashboard> {
             style: TextStyle(fontSize: 11, color: Colors.blueGrey[500])),
       ]),
       actions: [
-        TextButton(
-            onPressed: () => Get.back(),
-            child: const Text("Cancel")),
+        TextButton(onPressed: () => Get.back(), child: const Text("Cancel")),
         ElevatedButton.icon(
           icon: const Icon(Icons.camera_alt, size: 16),
           label: const Text("Capture"),
@@ -130,7 +132,7 @@ class _State extends State<SpecialEmployeeDashboard> {
   }
 
   // ================================================================
-  // HOME PAGE — scrollable, no overflow
+  // HOME PAGE
   // ================================================================
   Widget _homePage() {
     return RefreshIndicator(
@@ -223,7 +225,7 @@ class _State extends State<SpecialEmployeeDashboard> {
           ),
         ])),
 
-        // Online chip — only green when actually tracking
+        // Online chip
         Obx(() => _onlineChip(c.isOnline.value)),
         const SizedBox(width: 6),
 
@@ -276,16 +278,70 @@ class _State extends State<SpecialEmployeeDashboard> {
   );
 
   // ================================================================
-  // TRACKING HERO — responsive, no fixed heights
+  // TRACKING HERO
+  // Three visual states:
+  //   1. 24-7 shift  → teal gradient, "24/7 Always On" badge, button disabled
+  //   2. Admin locked → red gradient, "Admin Locked" badge, button disabled
+  //   3. Normal ON/OFF → green / dark gradient, toggle works
   // ================================================================
   Widget _trackingHero() {
     return Obx(() {
-      final locked = c.trackLocked.value;
+      final is247  = c.is24x7.value;
+      final locked = c.trackLocked.value && !is247;   // admin-forced (non-24-7)
       final on     = c.trackingOn.value;
-      final colors = locked
-          ? [const Color(0xFFB91C1C), const Color(0xFF991B1B)]
-          : on ? [const Color(0xFF15803D), const Color(0xFF166534)]
-              : [const Color(0xFF334155), const Color(0xFF1E293B)];
+
+      // Gradient colours
+      List<Color> colors;
+      if (is247) {
+        colors = [const Color(0xFF0F766E), const Color(0xFF115E59)]; // teal
+      } else if (locked) {
+        colors = [const Color(0xFFB91C1C), const Color(0xFF991B1B)]; // red
+      } else if (on) {
+        colors = [const Color(0xFF15803D), const Color(0xFF166534)]; // green
+      } else {
+        colors = [const Color(0xFF334155), const Color(0xFF1E293B)]; // dark
+      }
+
+      // Leading icon
+      IconData heroIcon;
+      if (is247) {
+        heroIcon = Icons.all_inclusive;
+      } else if (locked) {
+        heroIcon = Icons.lock;
+      } else {
+        heroIcon = on ? Icons.location_on : Icons.location_off;
+      }
+
+      // Title / subtitle
+      final title = is247
+          ? "Always Tracking (24/7)"
+          : locked
+              ? "Tracking Locked ON"
+              : on ? "Tracking Active" : "Tracking Inactive";
+
+      final subtitle = is247
+          ? "Continuous tracking — cannot be stopped"
+          : locked
+              ? "Force-enabled by admin"
+              : on
+                  ? "Your location is being shared"
+                  : "Tap below to start sharing";
+
+      // Button state
+      final bool btnDisabled = is247 || locked;
+      final Color btnTextColor = btnDisabled
+          ? Colors.white54
+          : on ? _red : _green;
+      final String btnLabel = is247
+          ? "Always ON — 24/7 Shift"
+          : locked
+              ? "Locked by Admin"
+              : on ? "Stop Tracking" : "Start Tracking";
+      final IconData btnIcon = is247
+          ? Icons.all_inclusive
+          : locked
+              ? Icons.lock
+              : on ? Icons.stop_circle_outlined : Icons.play_circle_outlined;
 
       return Container(
         width: double.infinity,
@@ -305,11 +361,14 @@ class _State extends State<SpecialEmployeeDashboard> {
               width: 46, height: 46,
               decoration: BoxDecoration(
                   color: _white.withOpacity(0.15), shape: BoxShape.circle),
-              child: Icon(
-                  locked ? Icons.lock : on ? Icons.location_on : Icons.location_off,
-                  color: _white, size: 24)),
+              child: Icon(heroIcon, color: _white, size: 24)),
             const Spacer(),
-            if (locked) _lockBadge("Admin Locked"),
+            // Badge
+            if (is247)
+              _lockBadge("24/7 Always ON", icon: Icons.all_inclusive)
+            else if (locked)
+              _lockBadge("Admin Locked"),
+            // REC dot
             c.recordingOn.value
                 ? Container(
                     margin: const EdgeInsets.only(left: 6),
@@ -329,21 +388,19 @@ class _State extends State<SpecialEmployeeDashboard> {
           ]),
 
           const SizedBox(height: 12),
-          Text(locked ? "Tracking Locked ON"
-              : on ? "Tracking Active" : "Tracking Inactive",
+          Text(title,
               style: const TextStyle(
                   fontSize: 20, fontWeight: FontWeight.w800, color: _white)),
           const SizedBox(height: 3),
-          Text(locked ? "Force-enabled by admin"
-              : on ? "Your location is being shared"
-                  : "Tap below to start sharing",
+          Text(subtitle,
               style: TextStyle(fontSize: 12, color: _white.withOpacity(0.75))),
 
           const SizedBox(height: 14),
 
-          // Stats row — wrap on narrow screens
+          // Stats row
           Wrap(spacing: 0, children: [
-            _hStat("Status", locked ? "LOCKED" : on ? "ACTIVE" : "OFF"),
+            _hStat("Status",
+                is247 ? "24/7" : locked ? "LOCKED" : on ? "ACTIVE" : "OFF"),
             _hDiv(),
             _hStat("Battery",
                 c.battery.value == -1 ? "N/A" : "${c.battery.value}%"),
@@ -356,34 +413,45 @@ class _State extends State<SpecialEmployeeDashboard> {
 
           const SizedBox(height: 14),
 
-          // Toggle button
+          // Toggle button — disabled for 24-7 and admin-locked
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: locked ? null : c.toggleTracking,
-              icon: Icon(
-                  locked ? Icons.lock
-                      : on ? Icons.stop_circle_outlined
-                          : Icons.play_circle_outlined,
-                  size: 20,
-                  color: locked ? Colors.white54 : on ? _red : _green),
-              label: Text(
-                  locked ? "Locked by Admin"
-                      : on ? "Stop Tracking" : "Start Tracking",
+              // onPressed=null disables the button (greyed out, no ripple)
+              onPressed: btnDisabled ? null : c.toggleTracking,
+              icon: Icon(btnIcon, size: 20, color: btnTextColor),
+              label: Text(btnLabel,
                   style: TextStyle(
                       fontSize: 14, fontWeight: FontWeight.w700,
-                      color: locked ? Colors.white54 : on ? _red : _green)),
+                      color: btnTextColor)),
               style: ElevatedButton.styleFrom(
-                backgroundColor: locked ? _white.withOpacity(0.1) : _white,
+                backgroundColor: btnDisabled
+                    ? _white.withOpacity(0.1)
+                    : _white,
+                disabledBackgroundColor: _white.withOpacity(0.1),
                 elevation: 0,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    side: locked
+                    side: btnDisabled
                         ? BorderSide(color: _white.withOpacity(0.3))
                         : BorderSide.none)),
             ),
           ),
+
+          // Extra hint for 24-7 employees
+          if (is247) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                "Tracking runs continuously for your 24/7 shift",
+                style: TextStyle(
+                    fontSize: 10,
+                    color: _white.withOpacity(0.6),
+                    fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
         ]),
       );
     });
@@ -405,14 +473,14 @@ class _State extends State<SpecialEmployeeDashboard> {
       width: 1, height: 28, color: _white.withOpacity(0.2),
       margin: const EdgeInsets.symmetric(horizontal: 6));
 
-  Widget _lockBadge(String text) => Container(
+  Widget _lockBadge(String text, {IconData icon = Icons.lock}) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(
         color: _white.withOpacity(0.15),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _white.withOpacity(0.3))),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.lock, color: _white, size: 9),
+      Icon(icon, color: _white, size: 9),
       const SizedBox(width: 3),
       Text(text, style: const TextStyle(
           color: _white, fontSize: 9, fontWeight: FontWeight.w700)),
@@ -531,36 +599,56 @@ class _State extends State<SpecialEmployeeDashboard> {
   // ================================================================
   Widget _shiftAndStats() {
     return Obx(() => Column(children: [
-      // Shift
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: _white, borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(
+              // Highlight 24-7 shift with teal border
+              color: c.is24x7.value
+                  ? _teal.withOpacity(0.4)
+                  : const Color(0xFFE2E8F0)),
           boxShadow: [BoxShadow(
               color: Colors.black.withOpacity(0.04),
               blurRadius: 8, offset: const Offset(0, 2))]),
         child: Row(children: [
           Container(width: 40, height: 40,
               decoration: BoxDecoration(
-                  color: _navy.withOpacity(0.08),
+                  color: c.is24x7.value
+                      ? _teal.withOpacity(0.1)
+                      : _navy.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(10)),
-              child: Icon(Icons.schedule, color: _navy, size: 20)),
+              child: Icon(
+                  c.is24x7.value ? Icons.all_inclusive : Icons.schedule,
+                  color: c.is24x7.value ? _teal : _navy, size: 20)),
           const SizedBox(width: 12),
           Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(c.workingSlot.value.isEmpty ? "No Shift Assigned"
                 : c.slotLabel(c.workingSlot.value),
-                style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w800, color: _dark),
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w800,
+                    color: c.is24x7.value ? _teal : _dark),
                 overflow: TextOverflow.ellipsis),
-            const Text("Working Shift",
-                style: TextStyle(fontSize: 10, color: _muted)),
+            Text(c.is24x7.value
+                ? "Tracking always active"
+                : "Working Shift",
+                style: const TextStyle(fontSize: 10, color: _muted)),
           ])),
+          // 24-7 badge next to shift
+          if (c.is24x7.value)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                  color: _teal.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _teal.withOpacity(0.35))),
+              child: Text("24/7",
+                  style: TextStyle(
+                      fontSize: 10, fontWeight: FontWeight.w800, color: _teal))),
         ]),
       ),
       const SizedBox(height: 10),
-      // Battery + Zones row
       Row(children: [
         Expanded(child: _miniStat(Icons.battery_charging_full, "Battery",
             c.battery.value == -1 ? "N/A" : "${c.battery.value}%",

@@ -31,13 +31,13 @@ class BootReceiver : BroadcastReceiver() {
         val token     = prefs.getString(LocationService.KEY_TOKEN, "") ?: ""
 
         if (!wasActive || userId == -1 || serverUrl.isEmpty()) {
-            Log.d(TAG, "Tracking not active — skipping")
+            Log.d(TAG, "Tracking not active — skipping restart")
             return
         }
 
-        Log.d(TAG, "Restarting tracking after boot: userId=$userId")
+        Log.d(TAG, "Restarting tracking after boot — userId=$userId")
 
-        // Start the foreground service
+        // Start the foreground service immediately
         val serviceIntent = Intent(context, LocationService::class.java).apply {
             putExtra("user_id",   userId)
             putExtra("serverUrl", serverUrl)
@@ -49,7 +49,8 @@ class BootReceiver : BroadcastReceiver() {
             context.startService(serviceIntent)
         }
 
-        // Also re-schedule the WorkManager rescue job after boot
+        // Re-schedule WorkManager rescue after reboot
+        // (WorkManager jobs don't survive reboots automatically on all API levels)
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -65,6 +66,6 @@ class BootReceiver : BroadcastReceiver() {
             request
         )
 
-        Log.d(TAG, "Service and WorkManager rescue scheduled after boot")
+        Log.d(TAG, "Service started and WorkManager rescue scheduled after boot")
     }
 }

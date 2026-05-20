@@ -25,7 +25,6 @@ class SpecialEmployeeController extends GetxController {
   final _battery = Battery();
   AudioRecorder? _recorder;
 
-  // FIX: 'const' is invalid for MethodChannel — must be static const or final
   static const _platform = MethodChannel('etracker_channel');
 
   late int    userId;
@@ -37,6 +36,9 @@ class SpecialEmployeeController extends GetxController {
   RxBool  recordingOn   = false.obs;
   RxBool  trackLocked   = false.obs;
   RxBool  recLocked     = false.obs;
+
+  // NEW: true when workingSlot == "24-7" — tracking is always ON and cannot be stopped
+  RxBool  is24x7        = false.obs;
 
   Rx<double?> lat      = Rx<double?>(null);
   Rx<double?> lng      = Rx<double?>(null);
@@ -54,6 +56,9 @@ class SpecialEmployeeController extends GetxController {
 
   DateTime? _lastLocationSent;
   Timer?    _onlineCheckTimer;
+
+  double? _lastSentLat;
+  double? _lastSentLng;
 
   IO.Socket? socket;
   Timer?     _locationTimer;
@@ -103,18 +108,14 @@ class SpecialEmployeeController extends GetxController {
   }
 
   // ── START NATIVE SERVICE ─────────────────────────────────────
-  // Extracted helper so both toggleTracking and loadControlStatus can call it
   Future<void> _startNativeService() async {
     try {
-      // FIX: Pass the raw HTTP base URL without /api suffix.
-      // LocationService.kt will append /api/location/update itself.
-      // Strip /api or /api/ from the end of baseUrl if present.
       final httpBase = ApiEndpoints.baseUrl
           .replaceAll(RegExp(r'/api/?$'), '');
-  
+
       await _platform.invokeMethod('startService', {
         'user_id':   userId,
-        'serverUrl': httpBase,                  // ✅ e.g. "http://10.0.0.1:5000"
+        'serverUrl': httpBase,
         'token':     box.read("token") ?? "",
       });
       debugPrint("✅ Native service started → $httpBase");
@@ -172,7 +173,7 @@ class SpecialEmployeeController extends GetxController {
     _onlineCheckTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_lastLocationSent == null) { isOnline.value = false; return; }
       final elapsed = DateTime.now().difference(_lastLocationSent!).inSeconds;
-      isOnline.value = elapsed <= 20;
+      isOnline.value = elapsed <= 480;
     });
   }
 
@@ -204,25 +205,36 @@ class SpecialEmployeeController extends GetxController {
         loading.value = false;
         return;
       }
-      final ts = res["tracking"]  as Map? ?? {};
-      final rs = res["recording"] as Map? ?? {};
+      final ts   = res["tracking"]  as Map? ?? {};
+      final rs   = res["recording"] as Map? ?? {};
+      final slot = res["working_hours_slot"] as String? ?? '';
 
-      trackLocked.value = ts["master_force"] == true || ts["master_force"] == 1;
-      trackingOn.value  = ts["effective"]    == true || ts["effective"]    == 1;
+      workingSlot.value = slot;
+
+      // ── 24-7 logic ──────────────────────────────────────────
+      // A 24-7 employee is ALWAYS tracking. We treat this exactly like
+      // master_force=true: trackLocked=true, trackingOn=true, and the
+      // toggle button is permanently disabled on the dashboard.
+      final bool slot24x7 = slot == "24-7";
+      is24x7.value = slot24x7;
+
+      trackLocked.value = slot24x7
+          ? true
+          : (ts["master_force"] == true || ts["master_force"] == 1);
+
+      trackingOn.value = slot24x7
+          ? true
+          : (ts["effective"] == true || ts["effective"] == 1);
+
       recLocked.value   = rs["master_force"] == true || rs["master_force"] == 1;
       recordingOn.value = rs["effective"]    == true || rs["effective"]    == 1;
-      workingSlot.value = res["working_hours_slot"] ?? '';
 
+      // ── Start / stop tracking ────────────────────────────────
       if (trackingOn.value) {
-        // FIX: Start both Flutter GPS timer AND native service on app launch
-        // This handles the case where tracking was ON before app was killed
         if (_locationTimer == null) _startGPS();
         await _startNativeService();
       } else {
         _stopGPS();
-        // Don't stop native service here — if it's running from a previous
-        // session, loadControlStatus is called on init and the backend
-        // says tracking is off, so stop it.
         await _stopNativeService();
       }
 
@@ -236,12 +248,25 @@ class SpecialEmployeeController extends GetxController {
     loading.value = false;
   }
 
+  /// Toggle tracking — completely blocked for 24-7 employees.
   Future<void> toggleTracking() async {
+    // 24-7 slot: tracking is always on, cannot be toggled
+    if (is24x7.value) {
+      Get.snackbar(
+        "Always ON",
+        "Your shift is 24/7. Tracking runs continuously and cannot be stopped.",
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    // Admin force-locked and currently ON → cannot turn off
     if (trackLocked.value && trackingOn.value) {
       Get.snackbar("Locked", "Admin force-enabled. Cannot turn off.",
           snackPosition: SnackPosition.BOTTOM);
       return;
     }
+
     final ns = !trackingOn.value;
     final res = await ApiService.post(
         ApiEndpoints.specialToggleTracking, {"user_id": userId, "enabled": ns});
@@ -249,13 +274,11 @@ class SpecialEmployeeController extends GetxController {
       trackingOn.value = ns;
       if (ns) {
         _startGPS();
-        // FIX: Start native service so tracking persists after app kill
         await _startNativeService();
       } else {
         _stopGPS();
         isOnline.value = false;
         _lastLocationSent = null;
-        // FIX: Stop native service and clear SharedPrefs active flag
         await _stopNativeService();
       }
       if (Get.isRegistered<EmployeeController>()) {
@@ -365,12 +388,12 @@ class SpecialEmployeeController extends GetxController {
     } catch (e) { debugPrint("_uploadRecording error: $e"); }
   }
 
-  // ── GPS Loop (Flutter-side, for when app is in foreground) ───
+  // ── GPS Loop ─────────────────────────────────────────────────
   void _startGPS() {
     if (_locationTimer != null) return;
     _sendLocation();
     _locationTimer = Timer.periodic(
-        const Duration(seconds: 8), (_) => _sendLocation());
+        const Duration(minutes: 2), (_) => _sendLocation());
   }
 
   void _stopGPS() {
@@ -393,6 +416,26 @@ class SpecialEmployeeController extends GetxController {
       final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
           timeLimit: const Duration(seconds: 10));
+          // ===== LOCATION CHANGE CHECK =====
+
+          if (_lastSentLat != null &&
+              _lastSentLng != null) {
+
+            final latDiff =
+                (pos.latitude - _lastSentLat!).abs();
+
+            final lngDiff =
+                (pos.longitude - _lastSentLng!).abs();
+
+            // Ignore tiny movement (10 meters approx)
+            if (latDiff < 0.0001 &&
+                lngDiff < 0.0001) {
+
+              debugPrint("⏭ Location unchanged, skipped");
+
+              return;
+            }
+          }
       lat.value        = pos.latitude;
       lng.value        = pos.longitude;
       lastUpdate.value = DateTime.now().toIso8601String();
@@ -404,7 +447,10 @@ class SpecialEmployeeController extends GetxController {
         "latitude":  pos.latitude,
         "longitude": pos.longitude,
         "battery":   battery.value,
+        
       });
+      _lastSentLat = pos.latitude;
+      _lastSentLng = pos.longitude;
 
       _markLocationSent();
     } catch (e) {
@@ -599,9 +645,10 @@ class SpecialEmployeeController extends GetxController {
       m >= 1000 ? "${(m / 1000).toStringAsFixed(2)} km" : "${m.round()} m";
 
   String slotLabel(String? slot) => const {
-    '9-5': '09:00 – 17:00  Day Shift',
-    '5-1': '17:00 – 01:00  Evening',
-    '1-9': '01:00 – 09:00  Night Shift',
+    '9-5':  '09:00 – 17:00  Day Shift',
+    '5-1':  '17:00 – 01:00  Evening',
+    '1-9':  '01:00 – 09:00  Night Shift',
+    '24-7': '24 / 7  Always On',
   }[slot] ?? 'Not Assigned';
 
   String formatTime(String? ts) {
@@ -614,11 +661,12 @@ class SpecialEmployeeController extends GetxController {
   }
 
   void logout() {
+    // For 24-7 employees we still stop GPS on explicit logout — the employee
+    // has consciously signed out, so tracking should cease.
     _stopGPS();
     _batteryTimer?.cancel();
     _onlineCheckTimer?.cancel();
     if (_isRecording) _stopAndUploadRecording();
-    // FIX: Stop native service on logout so it doesn't track after sign-out
     _stopNativeService();
     try { socket?.disconnect(); socket?.dispose(); } catch (_) {}
     box.erase();
@@ -634,8 +682,7 @@ class SpecialEmployeeController extends GetxController {
     try { _recorder?.dispose(); } catch (_) {}
     try { socket?.disconnect(); socket?.dispose(); } catch (_) {}
     super.onClose();
-    // Note: do NOT stop the native service in onClose —
-    // onClose is called when the widget tree disposes (e.g. navigation),
-    // not only when the app is killed. The native service should keep running.
+    // Do NOT stop the native service in onClose — it must keep running in
+    // the background, including for 24-7 employees after the app is minimised.
   }
 }

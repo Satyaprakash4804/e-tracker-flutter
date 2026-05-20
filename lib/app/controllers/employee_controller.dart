@@ -32,7 +32,6 @@ class EmployeeController extends GetxController {
   RxDouble liveLat = 0.0.obs;
   RxDouble liveLng = 0.0.obs;
 
-  // FIX: Use RxBool so UI can react when user is ready
   final RxBool _userReady = false.obs;
 
   int userId = 0;
@@ -41,13 +40,33 @@ class EmployeeController extends GetxController {
   final box = GetStorage();
   Timer? _dbTimeTimer;
 
+  // ── RESTORE FROM STORAGE ─────────────────────────────────────
+  // FIX: Called when the dashboard GetPage binding finds no existing
+  // controller (cold-start or after app-kill). Reads userId & username
+  // from GetStorage so the dashboard never shows an empty name.
+  void restoreFromStorage() {
+    final int storedId     = box.read("user_id")   ?? 0;
+    final String storedName = box.read("username") ?? "";
+    if (storedId > 0) {
+      setUser(storedId, storedName);
+    }
+  }
+
   // ── SET USER ─────────────────────────────────────────────────
-  // FIX: All data loads are triggered from here, AFTER userId is set.
+  // All data loads are triggered from here, AFTER userId is set.
   void setUser(int id, String name) {
     if (id <= 0) {
       debugPrint("⚠️ setUser called with invalid id=$id — skipping");
       return;
     }
+
+    // Guard: if already initialised with the same userId, skip to avoid
+    // double-initialising socket / reloading geofences unnecessarily.
+    if (userId == id && _userReady.value) {
+      debugPrint("ℹ️ setUser: userId=$id already set, skipping re-init");
+      return;
+    }
+
     userId = id;
     employeeName.value = name;
 
@@ -98,7 +117,6 @@ class EmployeeController extends GetxController {
   }
 
   // ── LOAD LATEST LOCATION ─────────────────────────────────────
-  // FIX: Guard userId > 0 before calling API
   Future<void> _loadLatestLocationFromBackend() async {
     if (userId <= 0) {
       debugPrint("⚠️ _loadLatestLocationFromBackend skipped — userId not set");
@@ -194,7 +212,6 @@ class EmployeeController extends GetxController {
   }
 
   // ── GEOFENCES ────────────────────────────────────────────────
-  // FIX: Guard userId > 0 before calling API
   Future<void> loadGeofences() async {
     if (userId <= 0) {
       debugPrint("⚠️ loadGeofences skipped — userId not set");

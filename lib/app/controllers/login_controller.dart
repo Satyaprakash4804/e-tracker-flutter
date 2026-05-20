@@ -83,7 +83,11 @@ class LoginController extends GetxController {
   }
 
   // ============================
+<<<<<<< HEAD
   // AUTO LOGIN (called from main.dart on app start)
+=======
+  // AUTO LOGIN (cold start / app resume)
+>>>>>>> e11effb (improve master, admin, special, tracker page)
   // ============================
   Future<void> tryAutoLogin() async {
     final bool loggedIn = box.read("logged_in") ?? false;
@@ -105,12 +109,12 @@ class LoginController extends GetxController {
 
     switch (role) {
       case "master_admin":
-        Get.put(MasterAdminController());
+        Get.put(MasterAdminController(), permanent: true);
         Get.offAllNamed(Routes.MASTER_ADMIN_DASHBOARD);
         break;
 
       case "admin":
-        Get.put(AdminController());
+        Get.put(AdminController(), permanent: true);
         Get.offAllNamed(Routes.ADMIN_DASHBOARD);
         break;
 
@@ -192,29 +196,46 @@ class LoginController extends GetxController {
     final role       = res["role"] as String;
     final int userId = res["user_id"];
 
+<<<<<<< HEAD
     // Persist session
+=======
+    // ── Persist session ───────────────────────────────────────
+>>>>>>> e11effb (improve master, admin, special, tracker page)
     box.write("logged_in", true);
     box.write("role",      role);
     box.write("username",  username.value.trim());
     box.write("user_id",   userId);
     box.write("token",     res["token"]);
 
+<<<<<<< HEAD
     // FIX: Use _resolveRegistration so we never wrongly write false
     final bool registered = await _resolveRegistration(
       role: role,
       userId: userId,
       loginResponse: res,
     );
+=======
+    // ── Determine registration status ─────────────────────────
+    // Priority order:
+    //  1. Backend login response includes registration_completed (most reliable)
+    //  2. Existing saved true in storage (don't lose a previously confirmed state)
+    //  3. If still false → ask the dedicated status endpoint as last resort
+    final bool apiSaysRegistered   = res["registration_completed"] == true;
+    final bool alreadySavedTrue    = box.read("employee_registered") == true;
+
+    bool registered = apiSaysRegistered || alreadySavedTrue;
+    box.write("employee_registered", registered);
+>>>>>>> e11effb (improve master, admin, special, tracker page)
 
     // Navigate by role
     switch (role) {
       case "master_admin":
-        Get.put(MasterAdminController());
+        Get.put(MasterAdminController(), permanent: true);
         Get.offAllNamed(Routes.MASTER_ADMIN_DASHBOARD);
         break;
 
       case "admin":
-        Get.put(AdminController());
+        Get.put(AdminController(), permanent: true);
         Get.offAllNamed(Routes.ADMIN_DASHBOARD);
         break;
 
@@ -223,8 +244,15 @@ class LoginController extends GetxController {
           Get.put(SpecialEmployeeController());
         }
         if (!registered) {
-          box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
-          Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+          // Final fallback: verify directly with the server.
+          registered = await _checkRegistrationOnServer(userId);
+          if (registered) {
+            box.write("employee_registered", true);
+            Get.offAllNamed(Routes.SPECIAL_EMPLOYEE_DASHBOARD);
+          } else {
+            box.write("post_registration_route", Routes.SPECIAL_EMPLOYEE_DASHBOARD);
+            Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+          }
         } else {
           Get.offAllNamed(Routes.SPECIAL_EMPLOYEE_DASHBOARD);
         }
@@ -235,9 +263,17 @@ class LoginController extends GetxController {
             ? Get.find<EmployeeController>()
             : Get.put(EmployeeController());
         emp.setUser(userId, username.value.trim());
+
         if (!registered) {
-          box.write("post_registration_route", Routes.EMPLOYEE_DASHBOARD);
-          Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+          // Final fallback: verify directly with the server.
+          registered = await _checkRegistrationOnServer(userId);
+          if (registered) {
+            box.write("employee_registered", true);
+            Get.offAllNamed(Routes.EMPLOYEE_DASHBOARD);
+          } else {
+            box.write("post_registration_route", Routes.EMPLOYEE_DASHBOARD);
+            Get.offAllNamed(Routes.EMPLOYEE_REGISTRATION);
+          }
         } else {
           Get.offAllNamed(Routes.EMPLOYEE_DASHBOARD);
         }
@@ -245,6 +281,23 @@ class LoginController extends GetxController {
 
       default:
         errorMessage.value = "Unknown role received. Please contact support.";
+    }
+  }
+
+  // ── Helper: check /employee/registration-status/{id} ─────────────────
+  // FIX: Only checks the "registered" field — NOT "success".
+  // The endpoint always returns success:true, so using success as the
+  // condition always returned true even for unregistered employees.
+  Future<bool> _checkRegistrationOnServer(int userId) async {
+    try {
+      final statusRes = await ApiService.get(
+        "${ApiEndpoints.employeeRegistrationStatus}/$userId",
+      );
+      if (statusRes == null) return false;
+      // Only trust the dedicated "registered" field from the response.
+      return statusRes["registered"] == true;
+    } catch (_) {
+      return false;
     }
   }
 

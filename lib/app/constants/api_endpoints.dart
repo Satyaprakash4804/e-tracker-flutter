@@ -1,12 +1,8 @@
 class ApiEndpoints {
     
-<<<<<<< HEAD
+
 //   static const String baseUrl = "http://10.163.185.54:5000/api";
 //   static const String socketBase = "http://10.163.185.54:5000";
-=======
-//   static const String baseUrl = "http://192.168.1.13:5000/api";
-//   static const String socketBase = "http://192.168.1.13:5000";
->>>>>>> e11effb (improve master, admin, special, tracker page)
 
   static const String baseUrl = "https://tracker.venus360.in/api";
   static const String socketBase = "https://tracker.venus360.in";
